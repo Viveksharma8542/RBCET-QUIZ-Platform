@@ -4,11 +4,7 @@ from app.core.config import settings
 from app.db.database import engine, Base, SessionLocal
 from app.models.models import User, RoleEnum
 from app.core.security import get_password_hash
-<<<<<<< HEAD
-from app.api.v1 import auth, users, quizzes, attempts, subjects, question_bank, analytics
-=======
 from app.api.v1 import auth, users, quizzes, attempts, subjects, question_bank, stats
->>>>>>> Backend-Things
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
