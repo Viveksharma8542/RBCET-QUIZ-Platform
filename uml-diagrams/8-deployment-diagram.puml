@@ -1,0 +1,98 @@
+@startuml Deployment Diagram
+
+title QuizzApp-RBMI Deployment Architecture
+
+node "Client Machine" <<device>> {
+    [Web Browser] as Browser
+    note right of Browser
+        Supported browsers:
+        - Chrome, Firefox, Edge
+        - Safari (macOS)
+    end note
+}
+
+node "Development Server" <<server>> {
+    
+    node "Frontend Server (Port 5173)" as FrontendNode {
+        component "Vite Dev Server" as ViteServer
+        component "React App\n(Hot Module Replacement)" as ReactApp
+        
+        ViteServer --> ReactApp
+    }
+    
+    node "Backend Server (Port 8000)" as BackendNode {
+        component "Uvicorn ASGI Server" as Uvicorn
+        component "FastAPI Application" as FastAPIApp
+        component "API Endpoints\n(40+ routes)" as APIEndpoints
+        
+        Uvicorn --> FastAPIApp
+        FastAPIApp --> APIEndpoints
+    }
+}
+
+node "Database Server" <<database>> {
+    database "MySQL Database\n(Port 3306)" as MySQLDB {
+        [quizapp_db schema] as DBSchema
+        [7 normalized tables] as Tables
+        
+        DBSchema --> Tables
+    }
+    
+    note bottom of MySQLDB
+        Production configuration:
+        - mysql+pymysql driver
+        - UTF-8 encoding
+        - InnoDB engine
+    end note
+}
+
+' Connections
+Browser -down-> ViteServer : HTTP/HTTPS\n(localhost:5173)
+Browser -down-> Uvicorn : REST API\n(localhost:8000)
+ReactApp -down-> FastAPIApp : Axios HTTP Client\n(/api/v1/*)
+
+FastAPIApp -down-> MySQLDB : SQLAlchemy ORM\nPyMySQL Driver
+
+' Alternative deployment
+node "Production Server" <<cloud>> {
+    component "Nginx Reverse Proxy\n(Port 80/443)" as Nginx
+    component "Gunicorn + Uvicorn Workers\n(Multiple instances)" as Gunicorn
+    component "Static Files\n(React Build)" as StaticFiles
+    
+    Nginx --> Gunicorn : Proxy API requests
+    Nginx --> StaticFiles : Serve static files
+}
+
+node "Cloud Database" <<cloud>> {
+    database "Managed MySQL\n(AWS RDS / DigitalOcean)" as CloudDB
+}
+
+Browser .down.> Nginx : HTTPS (Production)
+Gunicorn .down.> CloudDB : Encrypted connection
+
+' Deployment notes
+note as DeploymentNote
+    **Development Setup:**
+    1. Frontend: npm run dev (Port 5173)
+    2. Backend: uvicorn app.main:app (Port 8000)
+    3. Database: Local MySQL (Port 3306)
+    
+    **Production Setup:**
+    1. Frontend: npm run build → Nginx static files
+    2. Backend: Gunicorn with 4+ Uvicorn workers
+    3. Database: Managed MySQL with backups
+    4. SSL: Let's Encrypt certificates
+    5. Environment: Docker containers (optional)
+end note
+
+note as SecurityNote
+    **Security Layers:**
+    - CORS configuration (allowed origins)
+    - JWT authentication (HS256)
+    - Password hashing (Bcrypt)
+    - SQL injection prevention (ORM)
+    - Input validation (Pydantic)
+    - HTTPS in production
+end note
+
+@enduml

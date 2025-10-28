@@ -1,0 +1,57 @@
+@startuml Authentication Sequence
+
+title User Authentication Flow
+
+actor User
+participant "Frontend\nApp" as Frontend
+participant "Auth\nAPI" as AuthAPI
+participant "Security\nService" as Security
+participant "Database" as DB
+
+User -> Frontend: Enter credentials\n(email, password)
+activate Frontend
+
+Frontend -> AuthAPI: POST /api/v1/auth/login\n{email, password}
+activate AuthAPI
+
+AuthAPI -> DB: Query user by email
+activate DB
+DB --> AuthAPI: User record
+deactivate DB
+
+alt User not found
+    AuthAPI --> Frontend: 401 Unauthorized\n"Invalid credentials"
+    Frontend --> User: Show error message
+else User found
+    AuthAPI -> Security: verify_password(\nplain_password,\nhashed_password)
+    activate Security
+    Security --> AuthAPI: Password valid
+    deactivate Security
+    
+    alt Invalid password
+        AuthAPI --> Frontend: 401 Unauthorized\n"Invalid credentials"
+        Frontend --> User: Show error message
+    else Valid password
+        AuthAPI -> Security: create_access_token(\nuser_id, role)
+        activate Security
+        Security -> Security: Encode JWT with\nHS256 algorithm
+        Security --> AuthAPI: JWT token
+        deactivate Security
+        
+        AuthAPI --> Frontend: 200 OK\n{access_token, user_info}
+        deactivate AuthAPI
+        
+        Frontend -> Frontend: Store token\nin localStorage
+        Frontend --> User: Redirect to dashboard
+        deactivate Frontend
+        
+        note right of Frontend
+            Token includes:
+            - user_id
+            - role (Admin/Teacher/Student)
+            - expiration (30 days)
+        end note
+    end
+end
+
+@enduml

@@ -1,0 +1,177 @@
+@startuml Database ERD
+
+!define TABLE(x) class x << (T,#FFAAAA) >>
+!define PK(x) <b><color:red>x</color></b>
+!define FK(x) <color:blue>x</color>
+
+title Database Entity-Relationship Diagram
+
+entity "users" as users {
+    PK(id) : INTEGER
+    --
+    full_name : VARCHAR(255)
+    email : VARCHAR(255) UNIQUE
+    phone_number : VARCHAR(20)
+    hashed_password : VARCHAR(255)
+    role : ENUM('ADMIN', 'TEACHER', 'STUDENT')
+    department : VARCHAR(100)
+    is_active : BOOLEAN
+    created_at : DATETIME
+}
+
+entity "subjects" as subjects {
+    PK(id) : INTEGER
+    --
+    name : VARCHAR(255) UNIQUE
+    code : VARCHAR(50) UNIQUE
+    description : TEXT
+    department : VARCHAR(100)
+    FK(created_by) : INTEGER
+    created_at : DATETIME
+}
+
+entity "question_bank" as qb {
+    PK(id) : INTEGER
+    --
+    FK(subject_id) : INTEGER
+    question_text : TEXT
+    question_type : ENUM('SINGLE_CHOICE', 'MULTIPLE_CHOICE', 'TRUE_FALSE')
+    option_a : VARCHAR(500)
+    option_b : VARCHAR(500)
+    option_c : VARCHAR(500)
+    option_d : VARCHAR(500)
+    correct_option : VARCHAR(10)
+    difficulty_level : ENUM('EASY', 'MEDIUM', 'HARD')
+    topic : VARCHAR(255)
+    explanation : TEXT
+    marks : INTEGER
+    FK(created_by) : INTEGER
+    created_at : DATETIME
+}
+
+entity "quizzes" as quizzes {
+    PK(id) : INTEGER
+    --
+    title : VARCHAR(255)
+    description : TEXT
+    FK(subject_id) : INTEGER
+    scheduled_start_time : DATETIME
+    duration_minutes : INTEGER
+    grace_period_minutes : INTEGER
+    marks_per_correct : FLOAT
+    marks_per_incorrect : FLOAT
+    is_active : BOOLEAN
+    FK(created_by) : INTEGER
+    created_at : DATETIME
+}
+
+entity "questions" as questions {
+    PK(id) : INTEGER
+    --
+    FK(quiz_id) : INTEGER
+    question_text : TEXT
+    question_type : ENUM('SINGLE_CHOICE', 'MULTIPLE_CHOICE', 'TRUE_FALSE')
+    option_a : VARCHAR(500)
+    option_b : VARCHAR(500)
+    option_c : VARCHAR(500)
+    option_d : VARCHAR(500)
+    correct_option : VARCHAR(10)
+    marks : INTEGER
+}
+
+entity "quiz_attempts" as attempts {
+    PK(id) : INTEGER
+    --
+    FK(quiz_id) : INTEGER
+    FK(student_id) : INTEGER
+    started_at : DATETIME
+    submitted_at : DATETIME
+    score : FLOAT
+    percentage : FLOAT
+    is_completed : BOOLEAN
+    time_taken_minutes : INTEGER
+}
+
+entity "answers" as answers {
+    PK(id) : INTEGER
+    --
+    FK(attempt_id) : INTEGER
+    FK(question_id) : INTEGER
+    selected_option : VARCHAR(10)
+    is_correct : BOOLEAN
+}
+
+' Relationships
+users ||--o{ subjects : "creates"
+users ||--o{ qb : "creates"
+users ||--o{ quizzes : "creates"
+users ||--o{ attempts : "takes"
+
+subjects ||--o{ qb : "contains"
+subjects ||--o{ quizzes : "categorizes"
+
+qb ||--o{ questions : "sources (optional)"
+
+quizzes ||--o{ questions : "has"
+quizzes ||--o{ attempts : "attempted in"
+
+attempts ||--o{ answers : "contains"
+questions ||--o{ answers : "answered in"
+
+' Cardinality notes
+note right of users
+    **User Roles:**
+    - ADMIN: Full system access
+    - TEACHER: Create quizzes, manage questions
+    - STUDENT: Take quizzes, view results
+    
+    **Indexes:**
+    - email (unique)
+    - role
+    - department
+end note
+
+note right of quizzes
+    **Quiz Timing Logic:**
+    - scheduled_start_time: When quiz becomes available
+    - grace_period_minutes: Extra time to start after scheduled_start_time
+    - duration_minutes: Time limit to complete quiz
+    
+    **Custom Marking:**
+    - marks_per_correct: Points for correct answer (e.g., +4)
+    - marks_per_incorrect: Deduction for wrong answer (e.g., -1)
+    
+    **Availability Window:**
+    Start: scheduled_start_time
+    End: scheduled_start_time + grace_period_minutes
+end note
+
+note bottom of attempts
+    **Completion Tracking:**
+    - is_completed: true when submitted
+    - time_taken_minutes: Actual time from start to submit
+    - score: Calculated using custom marking scheme
+    - percentage: (score / max_possible_score) × 100
+    
+    **Constraints:**
+    - One student can attempt same quiz multiple times
+    - Each attempt tracks individual timing
+end note
+
+note left of qb
+    **Question Reusability:**
+    - Questions stored in subject-wise banks
+    - Filterable by difficulty_level and topic
+    - Can be reused across multiple quizzes
+    - Maintains consistency in question quality
+end note
+
+note bottom of questions
+    **Question Sourcing:**
+    - Can be created manually for quiz
+    - OR copied from question_bank
+    - question_type determines UI rendering
+    - correct_option: 'A', 'B', 'C', 'D', or 'TRUE'/'FALSE'
+end note
+
+@enduml

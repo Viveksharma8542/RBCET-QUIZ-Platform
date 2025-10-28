@@ -1,0 +1,200 @@
+@startuml QuizzApp Class Diagram
+
+' Database Models - Class Diagram
+
+skinparam class {
+    BackgroundColor<<Entity>> LightBlue
+    BackgroundColor<<Enum>> LightGreen
+    BackgroundColor<<Service>> LightYellow
+}
+
+enum RoleEnum <<Enum>> {
+    ADMIN
+    TEACHER
+    STUDENT
+}
+
+enum QuestionTypeEnum <<Enum>> {
+    MCQ
+    TRUE_FALSE
+    SHORT_ANSWER
+}
+
+enum DifficultyLevel <<Enum>> {
+    EASY
+    MEDIUM
+    HARD
+}
+
+class User <<Entity>> {
+    +id: Integer {PK}
+    +email: String {unique}
+    +hashed_password: String
+    +first_name: String
+    +last_name: String
+    +role: RoleEnum
+    +phone_number: String
+    +student_id: String {unique}
+    +department: String
+    +class_year: String
+    +is_active: Boolean
+    +created_at: DateTime
+    +last_active: DateTime
+    --
+    +quizzes_created: List[Quiz]
+    +quiz_attempts: List[QuizAttempt]
+}
+
+class Subject <<Entity>> {
+    +id: Integer {PK}
+    +name: String {unique}
+    +code: String {unique}
+    +description: Text
+    +department: String
+    +created_at: DateTime
+    --
+    +quizzes: List[Quiz]
+    +question_banks: List[QuestionBank]
+}
+
+class QuestionBank <<Entity>> {
+    +id: Integer {PK}
+    +subject_id: Integer {FK}
+    +question_text: Text
+    +question_type: QuestionTypeEnum
+    +option_a: String
+    +option_b: String
+    +option_c: String
+    +option_d: String
+    +correct_answer: String
+    +difficulty_level: DifficultyLevel
+    +topic: String
+    +created_by: Integer {FK}
+    +created_at: DateTime
+    --
+    +subject: Subject
+}
+
+class Quiz <<Entity>> {
+    +id: Integer {PK}
+    +title: String
+    +description: Text
+    +creator_id: Integer {FK}
+    +subject_id: Integer {FK}
+    +department: String
+    +class_year: String
+    +scheduled_start_time: DateTime
+    +duration_minutes: Integer
+    +grace_period_minutes: Integer
+    +marks_per_correct: Float
+    +marks_per_incorrect: Float
+    +total_marks: Float
+    +is_active: Boolean
+    +created_at: DateTime
+    --
+    +creator: User
+    +subject: Subject
+    +questions: List[Question]
+    +attempts: List[QuizAttempt]
+}
+
+class Question <<Entity>> {
+    +id: Integer {PK}
+    +quiz_id: Integer {FK}
+    +question_text: Text
+    +question_type: QuestionTypeEnum
+    +option_a: String
+    +option_b: String
+    +option_c: String
+    +option_d: String
+    +correct_answer: String
+    +marks: Float
+    +order: Integer
+    --
+    +quiz: Quiz
+}
+
+class QuizAttempt <<Entity>> {
+    +id: Integer {PK}
+    +quiz_id: Integer {FK}
+    +student_id: Integer {FK}
+    +score: Float
+    +total_marks: Float
+    +percentage: Float
+    +started_at: DateTime
+    +submitted_at: DateTime
+    +is_completed: Boolean
+    +time_taken_minutes: Integer
+    --
+    +quiz: Quiz
+    +student: User
+    +answers: List[Answer]
+}
+
+class Answer <<Entity>> {
+    +id: Integer {PK}
+    +attempt_id: Integer {FK}
+    +question_id: Integer {FK}
+    +answer_text: Text
+    +is_correct: Boolean
+    +marks_awarded: Float
+    --
+    +attempt: QuizAttempt
+}
+
+' Relationships
+User "1" --> "0..*" Quiz : creates
+User "1" --> "0..*" QuizAttempt : attempts
+User "1" --> "0..*" QuestionBank : creates
+
+Subject "1" --> "0..*" Quiz : categorizes
+Subject "1" --> "0..*" QuestionBank : organizes
+
+Quiz "1" --> "0..*" Question : contains
+Quiz "1" --> "0..*" QuizAttempt : has
+Quiz "*" --> "1" User : created_by
+Quiz "*" --> "0..1" Subject : belongs_to
+
+QuizAttempt "1" --> "0..*" Answer : contains
+QuizAttempt "*" --> "1" Quiz : for
+QuizAttempt "*" --> "1" User : by_student
+
+Question "*" --> "1" Quiz : belongs_to
+
+Answer "*" --> "1" QuizAttempt : in
+Answer "*" --> "1" Question : answers
+
+QuestionBank "*" --> "1" Subject : categorized_by
+QuestionBank "*" --> "0..1" User : created_by
+
+User --> RoleEnum : has
+Question --> QuestionTypeEnum : has
+QuestionBank --> QuestionTypeEnum : has
+QuestionBank --> DifficultyLevel : has
+
+note right of User
+  Users can have different roles:
+  - ADMIN: Manages system
+  - TEACHER: Creates quizzes
+  - STUDENT: Takes quizzes
+end note
+
+note right of Quiz
+  Quiz timing:
+  - scheduled_start_time: When quiz opens
+  - grace_period_minutes: Late start allowance
+  - duration_minutes: Quiz duration
+  
+  Custom marking:
+  - marks_per_correct: Points for right answer
+  - marks_per_incorrect: Deduction for wrong answer
+end note
+
+note right of QuizAttempt
+  Tracks quiz completion:
+  - is_completed: Whether submitted
+  - time_taken_minutes: Actual time used
+  - percentage: Final score percentage
+end note
+
+@enduml

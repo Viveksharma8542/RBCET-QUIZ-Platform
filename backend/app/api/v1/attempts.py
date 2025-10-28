@@ -4,12 +4,13 @@ from sqlalchemy import func
 from datetime import datetime, timedelta
 from typing import List
 from app.db.database import get_db
-from app.models.models import User, Quiz, QuizAttempt, Answer, Question
+from app.models.models import User, Quiz, QuizAttempt, Answer, Question, RoleEnum
 from app.schemas.schemas import (
     QuizAttemptStart, QuizAttemptSubmit, QuizAttemptResponse,
-    DashboardStats, ActivityItem
+    QuizAttemptDetailResponse
 )
 from app.core.deps import get_current_active_user, require_role
+from app.services.quiz_service import check_quiz_availability, calculate_quiz_score
 
 router = APIRouter()
 
@@ -20,10 +21,7 @@ async def start_quiz_attempt(
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    Start a quiz attempt with eligibility checks
-    - Validates quiz is active
-    - Checks schedule and grace period
-    - Prevents duplicate attempts
+    Start a quiz attempt. Validates timing constraints and student eligibility.
     """
     # Verify quiz exists
     quiz = db.query(Quiz).filter(Quiz.id == attempt_data.quiz_id).first()
@@ -39,36 +37,33 @@ async def start_quiz_attempt(
             detail="Quiz is not active"
         )
     
-    # Check if already attempted
+    # Check for existing attempt
     existing_attempt = db.query(QuizAttempt).filter(
         QuizAttempt.quiz_id == quiz.id,
         QuizAttempt.student_id == current_user.id
     ).first()
     
-    if existing_attempt:
+    # Check quiz availability based on timing rules
+    availability = check_quiz_availability(quiz, current_user.id, existing_attempt)
+    
+    if not availability.can_start:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You have already attempted this quiz"
+            detail=availability.message
         )
     
-    # Check schedule and grace period
-    if quiz.scheduled_at:
-        now = datetime.utcnow()
-        grace_end = quiz.scheduled_at + timedelta(minutes=quiz.grace_period_minutes)
-        
-        if now < quiz.scheduled_at:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Quiz has not started yet. Starts at {quiz.scheduled_at}"
-            )
-        
-        if now > grace_end:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Grace period for starting this quiz has expired"
-            )
+    # If student has incomplete attempt, return it
+    if existing_attempt and not existing_attempt.is_completed:
+        return existing_attempt
     
-    # Create attempt
+    # If student already completed the quiz
+    if existing_attempt and existing_attempt.is_completed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You have already completed this quiz"
+        )
+    
+    # Create new attempt
     db_attempt = QuizAttempt(
         quiz_id=quiz.id,
         student_id=current_user.id,
@@ -91,11 +86,7 @@ async def submit_quiz_attempt(
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    Submit quiz attempt with custom marking scheme
-    - Applies positive marking for correct answers
-    - Applies negative marking for incorrect answers
-    - Validates deadline if quiz has duration
-    - Calculates time taken
+    Submit quiz answers and calculate score based on custom marking scheme.
     """
     # Get attempt
     attempt = db.query(QuizAttempt).filter(QuizAttempt.id == attempt_id).first()
@@ -112,65 +103,55 @@ async def submit_quiz_attempt(
             detail="Not your attempt"
         )
     
+    # Check if already submitted
     if attempt.is_completed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Quiz already submitted"
         )
     
-    # Get quiz
+    # Get quiz for marking scheme
     quiz = db.query(Quiz).filter(Quiz.id == attempt.quiz_id).first()
     
-    # Validate deadline
-    if quiz.duration_minutes:
-        deadline = attempt.started_at + timedelta(minutes=quiz.duration_minutes)
-        if datetime.utcnow() > deadline:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Submission deadline has passed"
-            )
+    # Check if deadline passed
+    deadline = attempt.started_at + timedelta(minutes=quiz.duration_minutes)
+    if datetime.utcnow() > deadline:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Quiz time expired. Cannot submit."
+        )
     
-    # Calculate score with custom marking scheme
-    total_score = 0
-    correct_count = 0
-    incorrect_count = 0
-    
+    # Process and save answers
+    answers_list = []
     for answer_data in submission.answers:
         question = db.query(Question).filter(Question.id == answer_data.question_id).first()
         if question:
             # Check answer correctness
             is_correct = answer_data.answer_text.strip().lower() == question.correct_answer.strip().lower()
             
-            # Apply marking scheme
-            if is_correct:
-                marks_awarded = quiz.marks_per_correct * question.marks
-                correct_count += 1
-            else:
-                marks_awarded = -quiz.negative_marking if quiz.negative_marking > 0 else 0
-                incorrect_count += 1
-            
-            total_score += marks_awarded
-            
-            # Save answer
+            # Create answer object
             db_answer = Answer(
                 attempt_id=attempt.id,
                 question_id=question.id,
                 answer_text=answer_data.answer_text,
                 is_correct=is_correct,
-                marks_awarded=marks_awarded
+                marks_awarded=0  # Will be calculated by service
             )
+            answers_list.append(db_answer)
             db.add(db_answer)
     
+    # Calculate score using custom marking scheme
+    total_score, percentage = calculate_quiz_score(answers_list, quiz)
+    
     # Calculate time taken
-    time_taken = (datetime.utcnow() - attempt.started_at).total_seconds() / 60  # in minutes
+    time_taken = int((datetime.utcnow() - attempt.started_at).total_seconds() / 60)
     
     # Update attempt
-    attempt.score = max(0, total_score)  # Don't allow negative total scores
-    attempt.percentage = (attempt.score / attempt.total_marks * 100) if attempt.total_marks > 0 else 0
+    attempt.score = total_score
+    attempt.percentage = percentage
     attempt.submitted_at = datetime.utcnow()
-    attempt.time_taken_minutes = round(time_taken, 2)
     attempt.is_completed = True
-    attempt.is_graded = True
+    attempt.time_taken_minutes = time_taken
     
     db.commit()
     db.refresh(attempt)
@@ -182,88 +163,96 @@ async def get_my_attempts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    attempts = db.query(QuizAttempt).filter(QuizAttempt.student_id == current_user.id).all()
+    """
+    Get all quiz attempts for the current student.
+    """
+    attempts = db.query(QuizAttempt).filter(
+        QuizAttempt.student_id == current_user.id
+    ).order_by(QuizAttempt.started_at.desc()).all()
     return attempts
 
-@router.get("/quiz/{quiz_id}/attempts", response_model=List[QuizAttemptResponse], dependencies=[Depends(require_role(["admin", "teacher"]))])
+@router.get("/quiz/{quiz_id}", response_model=List[QuizAttemptResponse], dependencies=[Depends(require_role([RoleEnum.ADMIN, RoleEnum.TEACHER]))])
 async def get_quiz_attempts(
     quiz_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
+    """
+    Get all attempts for a specific quiz. Teachers can only see attempts for their quizzes.
+    """
+    quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
+    if not quiz:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Quiz not found"
+        )
+    
+    # Teachers can only view attempts for their own quizzes
+    if current_user.role == RoleEnum.TEACHER and quiz.creator_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view attempts for your own quizzes"
+        )
+    
     attempts = db.query(QuizAttempt).filter(QuizAttempt.quiz_id == quiz_id).all()
     return attempts
 
-@router.get("/stats/dashboard", response_model=DashboardStats, dependencies=[Depends(require_role(["admin"]))])
-async def get_dashboard_stats(
+@router.get("/student/{student_id}", response_model=List[QuizAttemptResponse], dependencies=[Depends(require_role([RoleEnum.ADMIN, RoleEnum.TEACHER]))])
+async def get_student_attempts(
+    student_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    # Total quizzes
-    total_quizzes = db.query(Quiz).count()
+    """
+    Get all quiz attempts for a specific student.
+    """
+    student = db.query(User).filter(
+        User.id == student_id,
+        User.role == RoleEnum.STUDENT
+    ).first()
     
-    # Students stats
-    total_students = db.query(User).filter(User.role == "student").count()
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found"
+        )
     
-    # Active students (students who attempted a quiz in last 30 days)
-    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-    active_students = db.query(func.count(func.distinct(QuizAttempt.student_id)))\
-        .filter(QuizAttempt.started_at >= thirty_days_ago).scalar() or 0
-    
-    # Yesterday's assessments
-    yesterday_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
-    yesterday_end = yesterday_start + timedelta(days=1)
-    yesterday_assessments = db.query(QuizAttempt)\
-        .filter(QuizAttempt.started_at >= yesterday_start, QuizAttempt.started_at < yesterday_end)\
-        .count()
-    
-    yesterday_attendance = db.query(func.count(func.distinct(QuizAttempt.student_id)))\
-        .filter(QuizAttempt.started_at >= yesterday_start, QuizAttempt.started_at < yesterday_end)\
-        .scalar() or 0
-    
-    # Active teachers today (teachers who created quiz or whose quiz was attempted today)
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    total_teachers = db.query(User).filter(User.role == "teacher").count()
-    active_teachers_today = 0  # Placeholder
-    
-    return {
-        "total_quizzes": total_quizzes,
-        "active_students": active_students,
-        "total_students": total_students,
-        "yesterday_assessments": yesterday_assessments,
-        "yesterday_attendance": yesterday_attendance,
-        "active_teachers_today": active_teachers_today,
-        "total_teachers": total_teachers
-    }
+    attempts = db.query(QuizAttempt).filter(
+        QuizAttempt.student_id == student_id
+    ).order_by(QuizAttempt.started_at.desc()).all()
+    return attempts
 
-@router.get("/stats/activity", response_model=List[ActivityItem], dependencies=[Depends(require_role(["admin"]))])
-async def get_recent_activity(
-    limit: int = 10,
+@router.get("/{attempt_id}", response_model=QuizAttemptDetailResponse)
+async def get_attempt_details(
+    attempt_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    # Get recent quiz attempts
-    recent_attempts = db.query(QuizAttempt).order_by(QuizAttempt.started_at.desc()).limit(limit).all()
+    """
+    Get detailed information about a specific quiz attempt including answers.
+    """
+    attempt = db.query(QuizAttempt).filter(QuizAttempt.id == attempt_id).first()
+    if not attempt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attempt not found"
+        )
     
-    activities = []
-    for attempt in recent_attempts:
-        user = db.query(User).filter(User.id == attempt.student_id).first()
-        quiz = db.query(Quiz).filter(Quiz.id == attempt.quiz_id).first()
-        
-        if user and quiz:
-            time_diff = datetime.utcnow() - attempt.started_at
-            if time_diff.seconds < 3600:
-                time_str = f"{time_diff.seconds // 60} mins ago"
-            elif time_diff.seconds < 86400:
-                time_str = f"{time_diff.seconds // 3600} hours ago"
-            else:
-                time_str = f"{time_diff.days} days ago"
-            
-            activities.append({
-                "user": f"{user.first_name} {user.last_name}",
-                "action": f"Attempted quiz: {quiz.title}",
-                "time": time_str,
-                "status": "success" if attempt.submitted_at else "in_progress"
-            })
+    # Students can only view their own attempts
+    # Teachers can view attempts for their quizzes
+    # Admins can view all attempts
+    quiz = db.query(Quiz).filter(Quiz.id == attempt.quiz_id).first()
     
-    return activities
+    if current_user.role == RoleEnum.STUDENT and attempt.student_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view your own attempts"
+        )
+    
+    if current_user.role == RoleEnum.TEACHER and quiz.creator_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view attempts for your own quizzes"
+        )
+    
+    return attempt

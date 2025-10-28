@@ -1,0 +1,160 @@
+@startuml Use Case Diagram
+
+left to right direction
+
+actor Admin as admin
+actor Teacher as teacher
+actor Student as student
+
+rectangle "QuizzApp-RBMI System" {
+  
+  ' Admin Use Cases
+  rectangle "User Management" {
+    usecase (Create Users) as UC1
+    usecase (Manage Teachers) as UC2
+    usecase (Manage Students) as UC3
+    usecase (Bulk Upload Users) as UC4
+  }
+  
+  rectangle "Subject Management" {
+    usecase (Create Subject) as UC5
+    usecase (Update Subject) as UC6
+    usecase (Delete Subject) as UC7
+  }
+  
+  rectangle "Question Bank" {
+    usecase (Add Question to Bank) as UC8
+    usecase (Update Question) as UC9
+    usecase (Delete Question) as UC10
+    usecase (Browse Question Bank) as UC11
+    usecase (Filter by Difficulty) as UC12
+  }
+  
+  rectangle "Quiz Management" {
+    usecase (Create Quiz) as UC13
+    usecase (Set Quiz Timing) as UC14
+    usecase (Set Marking Scheme) as UC15
+    usecase (Add Questions Manually) as UC16
+    usecase (Add Questions from Bank) as UC17
+    usecase (Update Quiz) as UC18
+    usecase (Delete Quiz) as UC19
+    usecase (Activate/Deactivate Quiz) as UC20
+  }
+  
+  rectangle "Quiz Taking" {
+    usecase (Check Quiz Availability) as UC21
+    usecase (Start Quiz Attempt) as UC22
+    usecase (Submit Quiz Answers) as UC23
+    usecase (View Quiz Results) as UC24
+  }
+  
+  rectangle "Analytics & Reports" {
+    usecase (View Dashboard Stats) as UC25
+    usecase (View Teacher Statistics) as UC26
+    usecase (View Student Statistics) as UC27
+    usecase (View Quiz Analytics) as UC28
+    usecase (Track Activity) as UC29
+  }
+  
+  rectangle "Authentication" {
+    usecase (Login) as UC30
+    usecase (Logout) as UC31
+  }
+}
+
+' Admin relationships
+admin --> UC1
+admin --> UC2
+admin --> UC3
+admin --> UC4
+admin --> UC5
+admin --> UC6
+admin --> UC7
+admin --> UC25
+admin --> UC26
+admin --> UC27
+admin --> UC28
+admin --> UC29
+
+' Teacher relationships
+teacher --> UC5
+teacher --> UC8
+teacher --> UC9
+teacher --> UC11
+teacher --> UC12
+teacher --> UC13
+teacher --> UC14
+teacher --> UC15
+teacher --> UC16
+teacher --> UC17
+teacher --> UC18
+teacher --> UC19
+teacher --> UC20
+teacher --> UC26
+teacher --> UC27
+teacher --> UC28
+
+' Student relationships
+student --> UC11
+student --> UC21
+student --> UC22
+student --> UC23
+student --> UC24
+student --> UC27
+
+' All users
+admin --> UC30
+admin --> UC31
+teacher --> UC30
+teacher --> UC31
+student --> UC30
+student --> UC31
+
+' Include relationships
+UC13 .> UC14 : <<include>>
+UC13 .> UC15 : <<include>>
+UC13 .> UC16 : <<include>>
+UC13 .> UC17 : <<extend>>
+
+UC22 .> UC21 : <<include>>
+UC23 .> UC22 : <<include>>
+
+UC8 .> UC11 : <<extend>>
+UC12 .> UC11 : <<extend>>
+
+' Notes
+note right of UC14
+  Quiz timing includes:
+  - Scheduled start time
+  - Duration
+  - Grace period
+end note
+
+note right of UC15
+  Custom marking:
+  - Points for correct
+  - Deduction for incorrect
+end note
+
+note right of UC21
+  Validates:
+  - Start time window
+  - Grace period
+  - Already completed
+end note
+
+note bottom of UC26
+  Teacher stats:
+  - Quizzes created
+  - Students reached
+  - Average scores
+end note
+
+note bottom of UC27
+  Student stats:
+  - Quizzes attempted
+  - Average score
+  - Completion rate
+end note
+
+@enduml

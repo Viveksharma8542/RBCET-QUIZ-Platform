@@ -1,0 +1,79 @@
+@startuml Quiz Creation Sequence
+
+title Quiz Creation with Timing and Question Bank
+
+actor Teacher
+participant "Frontend\nApp" as Frontend
+participant "Quiz\nAPI" as QuizAPI
+participant "Question Bank\nAPI" as QBAPI
+participant "Quiz\nService" as QuizService
+participant "Database" as DB
+
+== Browse Question Bank ==
+Teacher -> Frontend: Open quiz creation form
+activate Frontend
+
+Frontend -> QBAPI: GET /api/v1/question-bank\n?subject_id=X&difficulty=MEDIUM
+activate QBAPI
+QBAPI -> DB: Query questions with filters
+activate DB
+DB --> QBAPI: Filtered questions list
+deactivate DB
+QBAPI --> Frontend: Question bank items
+deactivate QBAPI
+
+Frontend --> Teacher: Display available questions
+
+== Create Quiz ==
+Teacher -> Frontend: Fill quiz details:\n- Title, subject\n- Scheduled start time\n- Duration: 60 minutes\n- Grace period: 10 minutes\n- Marks: +4 correct, -1 incorrect\n- Select questions from bank
+
+Frontend -> QuizAPI: POST /api/v1/quizzes/\nQuizCreate payload
+activate QuizAPI
+
+note right of QuizAPI
+    Payload includes:
+    - title, subject_id
+    - scheduled_start_time
+    - duration_minutes: 60
+    - grace_period_minutes: 10
+    - marks_per_correct: 4
+    - marks_per_incorrect: -1
+    - questions_from_bank: [qb_id1, qb_id2]
+end note
+
+QuizAPI -> DB: Begin transaction
+activate DB
+
+QuizAPI -> DB: INSERT INTO quizzes\n(timing + marking fields)
+DB --> QuizAPI: Quiz ID created
+
+alt Questions from Bank
+    loop For each question_bank_id
+        QuizAPI -> DB: INSERT INTO questions\n(quiz_id, from question_bank)
+        DB --> QuizAPI: Question created
+    end
+else Manual Questions
+    loop For each manual question
+        QuizAPI -> DB: INSERT INTO questions\n(quiz_id, question data)
+        DB --> QuizAPI: Question created
+    end
+end
+
+QuizAPI -> DB: COMMIT transaction
+DB --> QuizAPI: Success
+deactivate DB
+
+QuizAPI --> Frontend: 200 OK\n{quiz_id, created_at}
+deactivate QuizAPI
+
+Frontend --> Teacher: Quiz created successfully\nShow quiz details
+
+note right of Teacher
+    Quiz timing behavior:
+    - Available from scheduled_start_time
+    - Can start until start_time + grace_period
+    - Must complete within duration_minutes
+    - Grace period doesn't extend duration
+end note
+
+@enduml

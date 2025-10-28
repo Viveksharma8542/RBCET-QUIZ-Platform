@@ -1,0 +1,109 @@
+@startuml Statistics Retrieval Sequence
+
+title Teacher & Student Statistics Retrieval
+
+actor "Admin/Teacher" as Admin
+actor Student
+participant "Frontend\nApp" as Frontend
+participant "Stats\nAPI" as StatsAPI
+participant "Database" as DB
+
+== Admin/Teacher Views Dashboard Statistics ==
+Admin -> Frontend: Navigate to dashboard
+activate Frontend
+
+Frontend -> StatsAPI: GET /api/v1/stats/dashboard
+activate StatsAPI
+
+StatsAPI -> DB: Execute complex aggregation queries
+activate DB
+
+note right of StatsAPI
+    Dashboard statistics include:
+    - Total users by role
+    - Total subjects
+    - Total questions in bank
+    - Total quizzes created
+    - Total quiz attempts
+    - Average quiz score
+    - Recently active users
+end note
+
+DB --> StatsAPI: Aggregated data
+deactivate DB
+
+StatsAPI --> Frontend: 200 OK\n{dashboard_stats}
+deactivate StatsAPI
+
+Frontend --> Admin: Display dashboard widgets
+deactivate Frontend
+
+== Teacher Views All Teachers Statistics ==
+Admin -> Frontend: View teachers performance
+activate Frontend
+
+Frontend -> StatsAPI: GET /api/v1/stats/teachers
+activate StatsAPI
+
+StatsAPI -> DB: Query with aggregations:\nSELECT u.*, \nCOUNT(DISTINCT q.id) as quizzes_created,\nCOUNT(DISTINCT qa.student_id) as students_reached,\nAVG(qa.percentage) as avg_score,\nMAX(qa.submitted_at) as last_activity\nFROM users u\nLEFT JOIN quizzes q ON u.id = q.created_by\nLEFT JOIN quiz_attempts qa ON q.id = qa.quiz_id\nWHERE u.role = 'TEACHER'\nGROUP BY u.id
+activate DB
+
+DB --> StatsAPI: Teacher statistics list
+deactivate DB
+
+StatsAPI --> Frontend: 200 OK\n[{teacher, stats}]
+deactivate StatsAPI
+
+Frontend --> Admin: Display teacher leaderboard
+deactivate Frontend
+
+== Student Views Personal Statistics ==
+Student -> Frontend: Navigate to profile
+activate Frontend
+
+Frontend -> StatsAPI: GET /api/v1/stats/student/{student_id}
+activate StatsAPI
+
+StatsAPI -> DB: Query student performance:\nSELECT \nCOUNT(DISTINCT qa.id) as total_attempts,\nCOUNT(DISTINCT CASE WHEN is_completed THEN qa.id END) as completed,\nAVG(qa.percentage) as avg_score,\nMAX(qa.percentage) as best_score,\nMIN(qa.percentage) as worst_score,\nAVG(qa.time_taken_minutes) as avg_time\nFROM quiz_attempts qa\nWHERE qa.student_id = :student_id
+activate DB
+
+DB --> StatsAPI: Student statistics
+
+StatsAPI -> DB: Query subject-wise performance:\nSELECT s.name,\nCOUNT(qa.id) as attempts,\nAVG(qa.percentage) as avg_score\nFROM subjects s\nJOIN quizzes q ON s.id = q.subject_id\nJOIN quiz_attempts qa ON q.id = qa.quiz_id\nWHERE qa.student_id = :student_id\nGROUP BY s.id
+DB --> StatsAPI: Subject-wise breakdown
+
+StatsAPI -> DB: Query recent attempts
+DB --> StatsAPI: Recent quiz history
+deactivate DB
+
+StatsAPI --> Frontend: 200 OK\n{overall_stats, subject_stats, recent_attempts}
+deactivate StatsAPI
+
+Frontend --> Student: Display performance dashboard:\n- Overall metrics\n- Subject-wise performance\n- Progress trends\n- Recent activity
+deactivate Frontend
+
+== Teacher Views Individual Student Statistics ==
+Admin -> Frontend: Click on student profile
+activate Frontend
+
+Frontend -> StatsAPI: GET /api/v1/stats/student/{student_id}
+activate StatsAPI
+
+note right of StatsAPI
+    Same endpoint as student view,
+    but accessible to teachers/admins
+    for monitoring student progress
+end note
+
+StatsAPI -> DB: Query student data
+activate DB
+DB --> StatsAPI: Student statistics
+deactivate DB
+
+StatsAPI --> Frontend: 200 OK\n{student_stats}
+deactivate StatsAPI
+
+Frontend --> Admin: Display student report:\n- Attempts & completion rate\n- Average score & trends\n- Subject strengths/weaknesses\n- Time management analysis
+deactivate Frontend
+
+@enduml

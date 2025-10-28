@@ -1,13 +1,32 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 from datetime import datetime
+from enum import Enum
+
+# Enums - Updated to match database uppercase values
+class RoleEnum(str, Enum):
+    ADMIN = "ADMIN"
+    TEACHER = "TEACHER"
+    STUDENT = "STUDENT"
+
+class QuestionTypeEnum(str, Enum):
+    SINGLE_CHOICE = "SINGLE_CHOICE"
+    MULTIPLE_CHOICE = "MULTIPLE_CHOICE"
+    TRUE_FALSE = "TRUE_FALSE"
+    SHORT_ANSWER = "SHORT_ANSWER"
+
+class DifficultyLevel(str, Enum):
+    EASY = "EASY"
+    MEDIUM = "MEDIUM"
+    HARD = "HARD"
 
 # User Schemas
 class UserBase(BaseModel):
     email: EmailStr
     first_name: str
     last_name: str
-    role: str
+    role: RoleEnum
+    phone_number: Optional[str] = None
     department: Optional[str] = None
     class_year: Optional[str] = None
     student_id: Optional[str] = None
@@ -19,6 +38,7 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    phone_number: Optional[str] = None
     department: Optional[str] = None
     class_year: Optional[str] = None
     phone_number: Optional[str] = None
@@ -30,6 +50,50 @@ class UserResponse(UserBase):
     is_active: bool
     created_at: datetime
     last_active: datetime
+    
+    class Config:
+        from_attributes = True
+
+class BulkUserCreate(BaseModel):
+    users: List[UserCreate]
+
+# Subject Schemas
+class SubjectBase(BaseModel):
+    name: str
+    code: str
+    description: Optional[str] = None
+    department: Optional[str] = None
+
+class SubjectCreate(SubjectBase):
+    pass
+
+class SubjectResponse(SubjectBase):
+    id: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# Question Bank Schemas
+class QuestionBankBase(BaseModel):
+    subject_id: int
+    question_text: str
+    question_type: QuestionTypeEnum
+    option_a: Optional[str] = None
+    option_b: Optional[str] = None
+    option_c: Optional[str] = None
+    option_d: Optional[str] = None
+    correct_answer: str
+    difficulty_level: Optional[DifficultyLevel] = None
+    topic: Optional[str] = None
+
+class QuestionBankCreate(QuestionBankBase):
+    pass
+
+class QuestionBankResponse(QuestionBankBase):
+    id: int
+    created_by: Optional[int]
+    created_at: datetime
     
     class Config:
         from_attributes = True
@@ -117,14 +181,18 @@ class QuestionBankResponse(QuestionBankBase):
 # Quiz Question Schemas
 class QuestionCreate(BaseModel):
     question_text: str
-    question_type: str = Field(..., pattern="^(mcq|true_false|short_answer)$")
+    question_type: QuestionTypeEnum
     option_a: Optional[str] = None
     option_b: Optional[str] = None
     option_c: Optional[str] = None
     option_d: Optional[str] = None
     correct_answer: str
     marks: float = 1.0
-    question_bank_id: Optional[int] = None  # If pulling from question bank
+    order: int = 0
+
+class QuestionFromBank(BaseModel):
+    question_bank_id: int
+    marks: float = 1.0
     order: int = 0
 
 class QuestionResponse(BaseModel):
@@ -136,6 +204,7 @@ class QuestionResponse(BaseModel):
     option_b: Optional[str]
     option_c: Optional[str]
     option_d: Optional[str]
+    correct_answer: str
     marks: float
     order: int
     
@@ -155,29 +224,22 @@ class QuizCreate(BaseModel):
     subject_id: Optional[int] = None
     department: Optional[str] = None
     class_year: Optional[str] = None
-    
-    # Timing
-    scheduled_at: Optional[datetime] = None
-    duration_minutes: Optional[int] = None
+    scheduled_start_time: Optional[datetime] = None
+    duration_minutes: int = 30
     grace_period_minutes: int = 5
-    
-    # Marking scheme
     marks_per_correct: float = 1.0
-    negative_marking: float = 0.0
-    
-    questions: List[QuestionCreate]
+    marks_per_incorrect: float = 0.0  # For negative marking
+    questions: List[QuestionCreate] = []
+    questions_from_bank: List[QuestionFromBank] = []
 
 class QuizUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
-    subject_id: Optional[int] = None
-    department: Optional[str] = None
-    class_year: Optional[str] = None
-    scheduled_at: Optional[datetime] = None
+    scheduled_start_time: Optional[datetime] = None
     duration_minutes: Optional[int] = None
     grace_period_minutes: Optional[int] = None
     marks_per_correct: Optional[float] = None
-    negative_marking: Optional[float] = None
+    marks_per_incorrect: Optional[float] = None
     is_active: Optional[bool] = None
 
 class QuizResponse(BaseModel):
@@ -188,12 +250,12 @@ class QuizResponse(BaseModel):
     subject_id: Optional[int]
     department: Optional[str]
     class_year: Optional[str]
-    scheduled_at: Optional[datetime]
-    duration_minutes: Optional[int]
+    scheduled_start_time: Optional[datetime]
+    duration_minutes: int
     grace_period_minutes: int
-    total_marks: float
     marks_per_correct: float
-    negative_marking: float
+    marks_per_incorrect: float
+    total_marks: float
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -203,13 +265,7 @@ class QuizResponse(BaseModel):
 
 class QuizDetailResponse(QuizResponse):
     questions: List[QuestionResponse]
-    creator: UserResponse
-    
-    class Config:
-        from_attributes = True
-
-class QuizWithAnswers(QuizResponse):
-    questions: List[QuestionWithAnswer]
+    subject: Optional[SubjectResponse] = None
     
     class Config:
         from_attributes = True
@@ -244,52 +300,55 @@ class QuizAttemptResponse(BaseModel):
     percentage: Optional[float]
     started_at: datetime
     submitted_at: Optional[datetime]
-    time_taken_minutes: Optional[float]
     is_completed: bool
-    is_graded: bool
+    time_taken_minutes: Optional[int]
     
     class Config:
         from_attributes = True
 
-class QuizAttemptDetail(QuizAttemptResponse):
-    quiz: QuizResponse
-    student: UserResponse
+class QuizAttemptDetailResponse(QuizAttemptResponse):
     answers: List[AnswerResponse]
+    quiz: QuizResponse
     
     class Config:
         from_attributes = True
 
-# Analytics & Stats Schemas
+# Stats Schemas
 class TeacherStats(BaseModel):
+    teacher_id: int
+    teacher_name: str
+    email: str
+    department: Optional[str]
     total_quizzes_created: int
-    total_questions_authored: int
-    students_attempted: int
+    total_questions_created: int
+    total_students_attempted: int
     average_quiz_score: Optional[float]
     last_quiz_created: Optional[datetime]
-    active_quizzes: int
-    subjects_taught: int
 
 class StudentStats(BaseModel):
+    student_id: int
+    student_name: str
+    email: str
+    student_code: Optional[str]
+    department: Optional[str]
+    class_year: Optional[str]
     total_quizzes_attempted: int
-    quizzes_completed: int
+    total_quizzes_completed: int
     average_score: Optional[float]
     average_percentage: Optional[float]
     highest_score: Optional[float]
     lowest_score: Optional[float]
-    last_attempt: Optional[datetime]
-    pending_quizzes: int
+    last_quiz_attempted: Optional[datetime]
 
 class DashboardStats(BaseModel):
     total_quizzes: int
     active_quizzes: int
     total_students: int
-    active_students: int
     total_teachers: int
-    active_teachers: int
-    total_subjects: int
-    total_questions_bank: int
+    active_teachers_today: int
     yesterday_assessments: int
-    total_attempts: int
+    total_subjects: int
+    total_question_bank_items: int
 
 class ActivityItem(BaseModel):
     id: int
@@ -313,25 +372,11 @@ class UserActivityResponse(BaseModel):
     class Config:
         from_attributes = True
 
-class PerformanceAnalytics(BaseModel):
-    subject_wise_performance: List[dict]
-    difficulty_wise_accuracy: dict
-    time_based_trends: List[dict]
-    top_performers: List[dict]
-    struggling_students: List[dict]
-
-# Bulk Operations
-class BulkUserCreate(BaseModel):
-    users: List[UserCreate]
-
-class BulkUploadResponse(BaseModel):
-    created_count: int
-    error_count: int
-    errors: List[dict]
-    skipped_count: int = 0
-
-class QuestionFilter(BaseModel):
-    subject_id: Optional[int] = None
-    difficulty: Optional[str] = None
-    topic: Optional[str] = None
-    question_type: Optional[str] = None
+# Quiz Timing Validation
+class QuizAvailability(BaseModel):
+    is_available: bool
+    message: str
+    can_start: bool
+    scheduled_start: Optional[datetime]
+    grace_period_end: Optional[datetime]
+    quiz_end: Optional[datetime]

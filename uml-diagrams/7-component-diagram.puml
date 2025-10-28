@@ -1,0 +1,163 @@
+@startuml Component Diagram
+
+title QuizzApp-RBMI System Architecture
+
+package "Frontend Layer" {
+    [React Application] as React
+    [Vite Dev Server] as Vite
+    [Tailwind CSS] as Tailwind
+    
+    package "React Components" {
+        [Auth Components] as AuthComp
+        [Dashboard Components] as DashComp
+        [Quiz Components] as QuizComp
+        [Bulk Upload Modal] as BulkUpload
+    }
+    
+    package "React Context" {
+        [Auth Context] as AuthCtx
+        [Toast Context] as ToastCtx
+    }
+    
+    [API Service Layer] as APIService
+}
+
+package "Backend Layer" {
+    [FastAPI Application] as FastAPI
+    
+    package "API Routers (v1)" {
+        [Auth Router] as AuthRouter
+        [Users Router] as UsersRouter
+        [Subjects Router] as SubjectsRouter
+        [Question Bank Router] as QBRouter
+        [Quizzes Router] as QuizzesRouter
+        [Attempts Router] as AttemptsRouter
+        [Stats Router] as StatsRouter
+    }
+    
+    package "Core Services" {
+        [Security Service] as Security
+        [Quiz Service] as QuizSvc
+        [Dependency Injection] as Deps
+        [Configuration] as Config
+    }
+    
+    package "Data Layer" {
+        [SQLAlchemy ORM] as ORM
+        [Pydantic Schemas] as Schemas
+        [Alembic Migrations] as Alembic
+    }
+}
+
+database "Database Layer" {
+    [MySQL Database] as MySQL
+    
+    package "Tables" {
+        [users] as UsersTable
+        [subjects] as SubjectsTable
+        [question_bank] as QBTable
+        [quizzes] as QuizzesTable
+        [questions] as QuestionsTable
+        [quiz_attempts] as AttemptsTable
+        [answers] as AnswersTable
+    }
+}
+
+cloud "External Services" {
+    [JWT Authentication] as JWT
+    [Bcrypt Hashing] as Bcrypt
+}
+
+' Frontend connections
+React --> AuthComp
+React --> DashComp
+React --> QuizComp
+React --> BulkUpload
+React --> AuthCtx
+React --> ToastCtx
+React --> APIService
+Vite --> React
+Tailwind --> React
+
+' API Service to Backend
+APIService --> FastAPI : HTTP/REST\n(Port 8000)
+
+' FastAPI to Routers
+FastAPI --> AuthRouter
+FastAPI --> UsersRouter
+FastAPI --> SubjectsRouter
+FastAPI --> QBRouter
+FastAPI --> QuizzesRouter
+FastAPI --> AttemptsRouter
+FastAPI --> StatsRouter
+
+' Routers to Services
+AuthRouter --> Security
+UsersRouter --> Deps
+SubjectsRouter --> Deps
+QBRouter --> Deps
+QuizzesRouter --> QuizSvc
+QuizzesRouter --> Deps
+AttemptsRouter --> QuizSvc
+AttemptsRouter --> Deps
+StatsRouter --> Deps
+
+' Services to Core
+QuizSvc --> ORM
+Security --> JWT
+Security --> Bcrypt
+Security --> Config
+Deps --> ORM
+Deps --> Security
+
+' Data Layer to Database
+ORM --> MySQL
+Schemas --> ORM
+Alembic --> MySQL
+
+' Database relationships
+MySQL --> UsersTable
+MySQL --> SubjectsTable
+MySQL --> QBTable
+MySQL --> QuizzesTable
+MySQL --> QuestionsTable
+MySQL --> AttemptsTable
+MySQL --> AnswersTable
+
+' Notes
+note right of QuizSvc
+    Business Logic:
+    - Quiz availability validation
+    - Custom scoring calculation
+    - Timing enforcement
+end note
+
+note right of Security
+    Authentication & Authorization:
+    - JWT token generation/validation
+    - Password hashing (Bcrypt)
+    - Role-based access control
+end note
+
+note bottom of MySQL
+    Production Database:
+    - Supports MySQL/PostgreSQL
+    - Development: SQLite option
+    - Managed by Alembic migrations
+end note
+
+note left of APIService
+    Axios-based HTTP client:
+    - Centralized API calls
+    - Token management
+    - Error handling
+end note
+
+note top of Schemas
+    Data Validation:
+    - Request/Response schemas
+    - Type safety with Pydantic v2
+    - Custom validators
+end note
+
+@enduml

@@ -2,9 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.database import engine, Base, SessionLocal
-from app.models.models import User
+from app.models.models import User, RoleEnum
 from app.core.security import get_password_hash
+<<<<<<< HEAD
 from app.api.v1 import auth, users, quizzes, attempts, subjects, question_bank, analytics
+=======
+from app.api.v1 import auth, users, quizzes, attempts, subjects, question_bank, stats
+>>>>>>> Backend-Things
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -20,7 +24,7 @@ def init_admin():
                 hashed_password=get_password_hash(settings.ADMIN_PASSWORD),
                 first_name="Admin",
                 last_name="User",
-                role="admin",
+                role=RoleEnum.ADMIN,
                 is_active=True
             )
             db.add(admin_user)
@@ -58,7 +62,9 @@ app.include_router(subjects.router, prefix="/api/v1/subjects", tags=["Subjects"]
 app.include_router(question_bank.router, prefix="/api/v1/question-bank", tags=["Question Bank"])
 app.include_router(quizzes.router, prefix="/api/v1/quizzes", tags=["Quizzes"])
 app.include_router(attempts.router, prefix="/api/v1/attempts", tags=["Quiz Attempts"])
-app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics & Reports"])
+app.include_router(subjects.router, prefix="/api/v1/subjects", tags=["Subjects"])
+app.include_router(question_bank.router, prefix="/api/v1/question-bank", tags=["Question Bank"])
+app.include_router(stats.router, prefix="/api/v1/stats", tags=["Statistics"])
 
 @app.get("/")
 async def root():

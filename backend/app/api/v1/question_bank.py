@@ -1,11 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app.core.deps import get_db, get_current_user, require_role
-from app.models.models import QuestionBank, User, Subject
-from app.schemas.schemas import (
-    QuestionBankCreate, QuestionBankUpdate, QuestionBankResponse, QuestionFilter
-)
+from app.core.deps import get_current_user, get_db
+from app.models.models import QuestionBank, User, Subject, RoleEnum
+from app.schemas.schemas import QuestionBankCreate, QuestionBankResponse, DifficultyLevel
 
 router = APIRouter()
 
@@ -13,11 +11,17 @@ router = APIRouter()
 def create_question(
     question: QuestionBankCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["admin", "teacher"]))
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Add a question to the question bank (Admin and Teacher only)
+    Add a question to the question bank (Teacher or Admin only)
     """
+    if current_user.role not in [RoleEnum.ADMIN, RoleEnum.TEACHER]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins and teachers can add questions to the bank"
+        )
+    
     # Verify subject exists
     subject = db.query(Subject).filter(Subject.id == question.subject_id).first()
     if not subject:
@@ -26,51 +30,39 @@ def create_question(
             detail="Subject not found"
         )
     
-    db_question = QuestionBank(
-        **question.dict(),
-        creator_id=current_user.id
-    )
+    db_question = QuestionBank(**question.dict(), created_by=current_user.id)
     db.add(db_question)
     db.commit()
     db.refresh(db_question)
+    
     return db_question
-
 
 @router.get("/", response_model=List[QuestionBankResponse])
 def get_questions(
+    subject_id: Optional[int] = None,
+    difficulty_level: Optional[DifficultyLevel] = None,
+    topic: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
-    subject_id: Optional[int] = None,
-    difficulty: Optional[str] = Query(None, regex="^(easy|medium|hard)$"),
-    topic: Optional[str] = None,
-    question_type: Optional[str] = Query(None, regex="^(mcq|true_false|short_answer)$"),
-    active_only: bool = True,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get questions from question bank with filtering
+    Get questions from the question bank with filtering options
     """
     query = db.query(QuestionBank)
-    
-    if active_only:
-        query = query.filter(QuestionBank.is_active == True)
     
     if subject_id:
         query = query.filter(QuestionBank.subject_id == subject_id)
     
-    if difficulty:
-        query = query.filter(QuestionBank.difficulty == difficulty)
+    if difficulty_level:
+        query = query.filter(QuestionBank.difficulty_level == difficulty_level)
     
     if topic:
         query = query.filter(QuestionBank.topic.ilike(f"%{topic}%"))
     
-    if question_type:
-        query = query.filter(QuestionBank.question_type == question_type)
-    
     questions = query.offset(skip).limit(limit).all()
     return questions
-
 
 @router.get("/{question_id}", response_model=QuestionBankResponse)
 def get_question(
@@ -79,7 +71,7 @@ def get_question(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get a specific question from the bank
+    Get a specific question from the question bank
     """
     question = db.query(QuestionBank).filter(QuestionBank.id == question_id).first()
     if not question:
@@ -87,18 +79,18 @@ def get_question(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Question not found"
         )
+    
     return question
-
 
 @router.put("/{question_id}", response_model=QuestionBankResponse)
 def update_question(
     question_id: int,
-    question_update: QuestionBankUpdate,
+    question_update: QuestionBankCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["admin", "teacher"]))
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Update a question in the bank (Admin and Teacher only)
+    Update a question in the question bank (Creator, Teacher, or Admin only)
     """
     question = db.query(QuestionBank).filter(QuestionBank.id == question_id).first()
     if not question:
@@ -107,34 +99,35 @@ def update_question(
             detail="Question not found"
         )
     
-    # Check permissions (creator or admin)
-    if current_user.role != "admin" and question.creator_id != current_user.id:
+    # Check permissions
+    if current_user.role not in [RoleEnum.ADMIN, RoleEnum.TEACHER]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to update this question"
+            detail="Only admins and teachers can update questions"
         )
     
-    # Update fields
-    update_data = question_update.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(question, field, value)
+    if current_user.role == RoleEnum.TEACHER and question.created_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Teachers can only update their own questions"
+        )
     
-    from datetime import datetime
-    question.updated_at = datetime.utcnow()
+    for key, value in question_update.dict().items():
+        setattr(question, key, value)
     
     db.commit()
     db.refresh(question)
+    
     return question
-
 
 @router.delete("/{question_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_question(
     question_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["admin", "teacher"]))
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Delete a question from the bank (Admin and Teacher only)
+    Delete a question from the question bank (Creator or Admin only)
     """
     question = db.query(QuestionBank).filter(QuestionBank.id == question_id).first()
     if not question:
@@ -143,100 +136,58 @@ def delete_question(
             detail="Question not found"
         )
     
-    # Check permissions (creator or admin)
-    if current_user.role != "admin" and question.creator_id != current_user.id:
+    # Check permissions
+    if current_user.role != RoleEnum.ADMIN and question.created_by != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to delete this question"
+            detail="You can only delete your own questions"
         )
     
-    # Soft delete
-    question.is_active = False
+    db.delete(question)
     db.commit()
+    
     return None
 
-
-@router.get("/subjects/{subject_id}/topics")
-def get_topics_by_subject(
+@router.get("/subjects/{subject_id}/stats")
+def get_subject_question_stats(
     subject_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get all unique topics for a subject
+    Get statistics about questions in a subject's question bank
     """
-    from sqlalchemy import func
+    subject = db.query(Subject).filter(Subject.id == subject_id).first()
+    if not subject:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subject not found"
+        )
     
-    topics = db.query(QuestionBank.topic).filter(
-        QuestionBank.subject_id == subject_id,
-        QuestionBank.is_active == True,
-        QuestionBank.topic.isnot(None)
-    ).distinct().all()
+    total_questions = db.query(QuestionBank).filter(QuestionBank.subject_id == subject_id).count()
     
-    return {"topics": [topic[0] for topic in topics if topic[0]]}
-
-
-@router.get("/subjects/{subject_id}/statistics")
-def get_subject_question_statistics(
-    subject_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Get statistics about questions for a subject
-    """
-    total_questions = db.query(QuestionBank).filter(
+    easy_count = db.query(QuestionBank).filter(
         QuestionBank.subject_id == subject_id,
-        QuestionBank.is_active == True
+        QuestionBank.difficulty_level == DifficultyLevel.EASY
     ).count()
     
-    easy = db.query(QuestionBank).filter(
+    medium_count = db.query(QuestionBank).filter(
         QuestionBank.subject_id == subject_id,
-        QuestionBank.difficulty == "easy",
-        QuestionBank.is_active == True
+        QuestionBank.difficulty_level == DifficultyLevel.MEDIUM
     ).count()
     
-    medium = db.query(QuestionBank).filter(
+    hard_count = db.query(QuestionBank).filter(
         QuestionBank.subject_id == subject_id,
-        QuestionBank.difficulty == "medium",
-        QuestionBank.is_active == True
-    ).count()
-    
-    hard = db.query(QuestionBank).filter(
-        QuestionBank.subject_id == subject_id,
-        QuestionBank.difficulty == "hard",
-        QuestionBank.is_active == True
-    ).count()
-    
-    mcq = db.query(QuestionBank).filter(
-        QuestionBank.subject_id == subject_id,
-        QuestionBank.question_type == "mcq",
-        QuestionBank.is_active == True
-    ).count()
-    
-    true_false = db.query(QuestionBank).filter(
-        QuestionBank.subject_id == subject_id,
-        QuestionBank.question_type == "true_false",
-        QuestionBank.is_active == True
-    ).count()
-    
-    short_answer = db.query(QuestionBank).filter(
-        QuestionBank.subject_id == subject_id,
-        QuestionBank.question_type == "short_answer",
-        QuestionBank.is_active == True
+        QuestionBank.difficulty_level == DifficultyLevel.HARD
     ).count()
     
     return {
         "subject_id": subject_id,
+        "subject_name": subject.name,
         "total_questions": total_questions,
         "by_difficulty": {
-            "easy": easy,
-            "medium": medium,
-            "hard": hard
-        },
-        "by_type": {
-            "mcq": mcq,
-            "true_false": true_false,
-            "short_answer": short_answer
+            "easy": easy_count,
+            "medium": medium_count,
+            "hard": hard_count
         }
     }

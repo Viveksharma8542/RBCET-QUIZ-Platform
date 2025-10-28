@@ -1,0 +1,143 @@
+@startuml Quiz Attempt Sequence
+
+title Student Quiz Attempt with Timing Validation
+
+actor Student
+participant "Frontend\nApp" as Frontend
+participant "Quiz\nAPI" as QuizAPI
+participant "Attempt\nAPI" as AttemptAPI
+participant "Quiz\nService" as QuizService
+participant "Database" as DB
+
+== Check Quiz Availability ==
+Student -> Frontend: View available quizzes
+activate Frontend
+
+Frontend -> QuizAPI: GET /api/v1/quizzes/
+activate QuizAPI
+QuizAPI -> DB: Query active quizzes
+activate DB
+DB --> QuizAPI: Quiz list
+deactivate DB
+QuizAPI --> Frontend: Available quizzes
+deactivate QuizAPI
+
+Student -> Frontend: Click on quiz
+Frontend -> QuizAPI: GET /api/v1/quizzes/{id}/availability
+activate QuizAPI
+
+QuizAPI -> QuizService: check_quiz_availability(\nquiz, user_id)
+activate QuizService
+
+QuizService -> DB: Check existing attempts
+activate DB
+DB --> QuizService: Previous attempts
+deactivate DB
+
+QuizService -> QuizService: Validate timing:\n1. Current time >= scheduled_start\n2. Current time <= start + grace_period\n3. Not already completed
+
+QuizService --> QuizAPI: QuizAvailability(\nis_available=True,\nmessage="Can start")
+deactivate QuizService
+
+QuizAPI --> Frontend: Availability status
+deactivate QuizAPI
+
+== Start Quiz Attempt ==
+alt Quiz is available
+    Student -> Frontend: Click "Start Quiz"
+    
+    Frontend -> AttemptAPI: POST /api/v1/attempts/start/{quiz_id}
+    activate AttemptAPI
+    
+    AttemptAPI -> QuizService: check_quiz_availability()
+    activate QuizService
+    QuizService --> AttemptAPI: Available
+    deactivate QuizService
+    
+    AttemptAPI -> DB: INSERT INTO quiz_attempts\n(started_at=NOW())
+    activate DB
+    DB --> AttemptAPI: Attempt ID
+    deactivate DB
+    
+    AttemptAPI -> DB: Query quiz questions
+    DB --> AttemptAPI: Questions list
+    deactivate DB
+    
+    AttemptAPI --> Frontend: 200 OK\n{attempt_id, questions}
+    deactivate AttemptAPI
+    
+    Frontend --> Student: Display quiz questions\nStart timer (duration_minutes)
+    
+    == Answer Questions ==
+    loop For each question
+        Student -> Frontend: Select answer option
+        Frontend -> Frontend: Store answer locally
+    end
+    
+    Student -> Frontend: Click "Submit Quiz"
+    
+    == Submit Quiz Attempt ==
+    Frontend -> AttemptAPI: POST /api/v1/attempts/{attempt_id}/submit\n{answers: [{question_id, selected_option}]}
+    activate AttemptAPI
+    
+    AttemptAPI -> DB: Query attempt details
+    activate DB
+    DB --> AttemptAPI: Attempt record
+    deactivate DB
+    
+    AttemptAPI -> AttemptAPI: Calculate time_taken =\nsubmit_time - started_at
+    
+    alt Time exceeded duration + grace period
+        AttemptAPI --> Frontend: 400 Bad Request\n"Time limit exceeded"
+        Frontend --> Student: Show error
+    else Within time limit
+        AttemptAPI -> DB: Begin transaction
+        activate DB
+        
+        loop For each answer
+            AttemptAPI -> DB: INSERT INTO answers\n(attempt_id, question_id,\nselected_option)
+            DB --> AttemptAPI: Answer saved
+        end
+        
+        AttemptAPI -> QuizService: calculate_quiz_score(\nattempt_id)
+        activate QuizService
+        
+        QuizService -> DB: Query all answers\nwith correct answers
+        activate DB
+        DB --> QuizService: Answers with results
+        deactivate DB
+        
+        QuizService -> QuizService: Calculate score:\ncorrect_count * marks_per_correct\n+ incorrect_count * marks_per_incorrect
+        
+        QuizService --> AttemptAPI: Score & percentage
+        deactivate QuizService
+        
+        AttemptAPI -> DB: UPDATE quiz_attempts SET\nscore, percentage,\nis_completed=true,\ntime_taken_minutes
+        DB --> AttemptAPI: Updated
+        
+        AttemptAPI -> DB: COMMIT transaction
+        DB --> AttemptAPI: Success
+        deactivate DB
+        
+        AttemptAPI --> Frontend: 200 OK\n{score, percentage, results}
+        deactivate AttemptAPI
+        
+        Frontend --> Student: Display results:\nScore, percentage,\ncorrect/incorrect breakdown
+        deactivate Frontend
+    end
+    
+else Quiz not available
+    Frontend --> Student: Show message:\n"Quiz not available"\n(Reason: not started,\ngrace period ended,\nor already completed)
+end
+
+note right of QuizService
+    Custom Marking Example:
+    - Quiz: +4 correct, -1 incorrect
+    - Student: 7 correct, 3 incorrect
+    - Score = (7 × 4) + (3 × -1)
+    - Score = 28 - 3 = 25 marks
+    - Total possible = 10 × 4 = 40
+    - Percentage = 25/40 × 100 = 62.5%
+end note
+
+@enduml

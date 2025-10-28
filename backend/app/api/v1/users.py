@@ -4,14 +4,14 @@ from typing import List
 import csv
 import io
 from app.db.database import get_db
-from app.models.models import User
+from app.models.models import User, RoleEnum
 from app.schemas.schemas import UserCreate, UserResponse, UserUpdate, UserActivityResponse
 from app.core.security import get_password_hash
 from app.core.deps import get_current_active_user, require_role
 
 router = APIRouter()
 
-@router.post("/", response_model=UserResponse, dependencies=[Depends(require_role(["admin"]))])
+@router.post("/", response_model=UserResponse, dependencies=[Depends(require_role([RoleEnum.ADMIN]))])
 async def create_user(
     user_data: UserCreate,
     db: Session = Depends(get_db),
@@ -26,7 +26,7 @@ async def create_user(
         )
     
     # Check if student_id already exists (for students)
-    if user_data.role == "student" and user_data.student_id:
+    if user_data.role == RoleEnum.STUDENT and user_data.student_id:
         existing_student = db.query(User).filter(User.student_id == user_data.student_id).first()
         if existing_student:
             raise HTTPException(
@@ -41,11 +41,11 @@ async def create_user(
         hashed_password=hashed_password,
         first_name=user_data.first_name,
         last_name=user_data.last_name,
-        role=user_data.role.lower(),
+        role=user_data.role,
+        phone_number=user_data.phone_number,
         department=user_data.department,
         class_year=user_data.class_year,
-        student_id=user_data.student_id if user_data.role.lower() == "student" else None,
-        phone_number=user_data.phone_number
+        student_id=user_data.student_id if user_data.role == RoleEnum.STUDENT else None
     )
     
     db.add(db_user)
@@ -54,7 +54,7 @@ async def create_user(
     
     return db_user
 
-@router.post("/bulk-upload", dependencies=[Depends(require_role(["admin"]))])
+@router.post("/bulk-upload", dependencies=[Depends(require_role([RoleEnum.ADMIN]))])
 async def bulk_upload_users(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -101,7 +101,17 @@ async def bulk_upload_users(
                     })
                     continue
                 
-                role = row['role'].strip().lower()
+                role_str = row['role'].strip().upper()  # Convert to uppercase
+                # Validate role
+                try:
+                    role = RoleEnum(role_str)
+                except ValueError:
+                    errors.append({
+                        "row": row_num,
+                        "error": f"Invalid role: {row['role']}. Must be ADMIN, TEACHER, or STUDENT"
+                    })
+                    continue
+                
                 email = row['email'].strip()
                 
                 # Check if email already exists
@@ -114,8 +124,8 @@ async def bulk_upload_users(
                     continue
                 
                 # For students, check student_id
-                student_id = row.get('student_id', '').strip() if role == 'student' else None
-                if role == 'student':
+                student_id = row.get('student_id', '').strip() if role == RoleEnum.STUDENT else None
+                if role == RoleEnum.STUDENT:
                     if not student_id:
                         errors.append({
                             "row": row_num,
@@ -141,6 +151,7 @@ async def bulk_upload_users(
                     first_name=row['first_name'].strip(),
                     last_name=row['last_name'].strip(),
                     role=role,
+                    phone_number=row.get('phone_number', '').strip() or None,
                     department=row.get('department', '').strip() or None,
                     class_year=row.get('class_year', '').strip() or None,
                     student_id=student_id,
@@ -178,7 +189,7 @@ async def bulk_upload_users(
             detail=f"Failed to process file: {str(e)}"
         )
 
-@router.get("/", response_model=List[UserResponse], dependencies=[Depends(require_role(["admin"]))])
+@router.get("/", response_model=List[UserResponse], dependencies=[Depends(require_role([RoleEnum.ADMIN]))])
 async def get_all_users(
     skip: int = 0,
     limit: int = 100,
@@ -189,7 +200,15 @@ async def get_all_users(
     query = db.query(User)
     
     if role:
-        query = query.filter(User.role == role.lower())
+        # Convert role string to uppercase to match enum
+        try:
+            role_enum = RoleEnum(role.upper())
+            query = query.filter(User.role == role_enum)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role: {role}. Must be ADMIN, TEACHER, or STUDENT"
+            )
     
     users = query.offset(skip).limit(limit).all()
     return users
@@ -200,7 +219,7 @@ async def get_current_user_info(
 ):
     return current_user
 
-@router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_role(["admin"]))])
+@router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_role([RoleEnum.ADMIN]))])
 async def get_user(
     user_id: int,
     db: Session = Depends(get_db),
@@ -214,7 +233,7 @@ async def get_user(
         )
     return user
 
-@router.put("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_role(["admin"]))])
+@router.put("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_role([RoleEnum.ADMIN]))])
 async def update_user(
     user_id: int,
     user_data: UserUpdate,
@@ -237,7 +256,7 @@ async def update_user(
     
     return user
 
-@router.delete("/{user_id}", dependencies=[Depends(require_role(["admin"]))])
+@router.delete("/{user_id}", dependencies=[Depends(require_role([RoleEnum.ADMIN]))])
 async def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
@@ -255,12 +274,12 @@ async def delete_user(
     
     return {"message": "User deleted successfully"}
 
-@router.get("/activity/teachers", response_model=List[UserActivityResponse], dependencies=[Depends(require_role(["admin"]))])
+@router.get("/activity/teachers", response_model=List[UserActivityResponse], dependencies=[Depends(require_role([RoleEnum.ADMIN]))])
 async def get_teacher_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    teachers = db.query(User).filter(User.role == "teacher").all()
+    teachers = db.query(User).filter(User.role == RoleEnum.TEACHER).all()
     return [
         {
             "id": teacher.id,
@@ -275,12 +294,12 @@ async def get_teacher_activity(
         for teacher in teachers
     ]
 
-@router.get("/activity/students", response_model=List[UserActivityResponse], dependencies=[Depends(require_role(["admin"]))])
+@router.get("/activity/students", response_model=List[UserActivityResponse], dependencies=[Depends(require_role([RoleEnum.ADMIN]))])
 async def get_student_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    students = db.query(User).filter(User.role == "student").all()
+    students = db.query(User).filter(User.role == RoleEnum.STUDENT).all()
     return [
         {
             "id": student.id,
