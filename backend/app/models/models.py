@@ -40,9 +40,12 @@ class Subject(Base):
     code = Column(String(50), unique=True, nullable=False)
     description = Column(Text, nullable=True)
     department = Column(String(100), nullable=True)
+    creator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
+    creator = relationship("User", back_populates="subjects_created")
     quizzes = relationship("Quiz", back_populates="subject")
     question_banks = relationship("QuestionBank", back_populates="subject")
 
@@ -82,20 +85,34 @@ class QuestionBank(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    creator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # Question details
     question_text = Column(Text, nullable=False)
     question_type = Column(String(50), nullable=False)  # 'mcq', 'true_false', 'short_answer'
+    
+    # MCQ options
     option_a = Column(String(500), nullable=True)
     option_b = Column(String(500), nullable=True)
     option_c = Column(String(500), nullable=True)
     option_d = Column(String(500), nullable=True)
     correct_answer = Column(String(500), nullable=False)
-    difficulty_level = Column(String(20), nullable=True)  # 'easy', 'medium', 'hard'
+    
+    # Organization
     topic = Column(String(200), nullable=True)
-    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    difficulty = Column(String(20), default='medium')  # 'easy', 'medium', 'hard'
+    marks = Column(Float, default=1)
+    
+    # Metadata
+    times_used = Column(Integer, default=0)  # How many times used in quizzes
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
     subject = relationship("Subject", back_populates="question_banks")
+    creator = relationship("User", back_populates="questions_created")
+    quiz_questions = relationship("Question", back_populates="question_bank")
 
 class Question(Base):
     __tablename__ = "questions"
@@ -153,58 +170,3 @@ class Answer(Base):
     
     # Relationships
     attempt = relationship("QuizAttempt", back_populates="answers")
-
-
-# NEW MODELS FOR ENHANCED FEATURES
-
-class Subject(Base):
-    __tablename__ = "subjects"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, unique=True)
-    code = Column(String, nullable=False, unique=True)
-    description = Column(Text, nullable=True)
-    department = Column(String, nullable=True)
-    creator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationships
-    creator = relationship("User", back_populates="subjects_created")
-    quizzes = relationship("Quiz", back_populates="subject")
-    question_bank = relationship("QuestionBank", back_populates="subject")
-
-
-class QuestionBank(Base):
-    __tablename__ = "question_bank"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
-    creator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
-    # Question details
-    question_text = Column(Text, nullable=False)
-    question_type = Column(String, nullable=False)  # 'mcq', 'true_false', 'short_answer'
-    
-    # MCQ options
-    option_a = Column(String, nullable=True)
-    option_b = Column(String, nullable=True)
-    option_c = Column(String, nullable=True)
-    option_d = Column(String, nullable=True)
-    correct_answer = Column(String, nullable=False)
-    
-    # Organization
-    topic = Column(String, nullable=True)
-    difficulty = Column(String, default='medium')  # 'easy', 'medium', 'hard'
-    marks = Column(Float, default=1)
-    
-    # Metadata
-    times_used = Column(Integer, default=0)  # How many times used in quizzes
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relationships
-    subject = relationship("Subject", back_populates="question_bank")
-    creator = relationship("User", back_populates="questions_created")
-    quiz_questions = relationship("Question", back_populates="question_bank")

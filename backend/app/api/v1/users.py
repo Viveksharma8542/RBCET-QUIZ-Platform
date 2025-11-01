@@ -154,8 +154,7 @@ async def bulk_upload_users(
                     phone_number=row.get('phone_number', '').strip() or None,
                     department=row.get('department', '').strip() or None,
                     class_year=row.get('class_year', '').strip() or None,
-                    student_id=student_id,
-                    phone_number=row.get('phone_number', '').strip() or None
+                    student_id=student_id
                 )
                 
                 db.add(new_user)
