@@ -519,7 +519,7 @@ tramp
 # ===========================
 
 # Temporary batch files (if any are created again)
-*.bat
+#*.bat
 
 # Environment files
 .env
