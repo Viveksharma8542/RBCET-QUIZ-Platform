@@ -165,8 +165,7 @@ You should see:
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 INFO:     Started reloader process
 INFO:     Started server process
-Admin user created: admin@yourdomain.comsudo pacman -S kchmviewer
-
+Admin user created: admin@yourdomain.com
 ```
 
 ### Test API
